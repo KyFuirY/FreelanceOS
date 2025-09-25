@@ -1,0 +1,503 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// AUTHENTIFICATION ET UTILISATEURS
+// ============================================================================
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  firstName String
+  lastName  String
+  avatar    String?
+  
+  // Paramètres métier
+  company   String?
+  siret     String?
+  tvaNumber String?
+  phone     String?
+  address   String?
+  city      String?
+  zipCode   String?
+  country   String   @default("FR")
+  
+  // Paramètres système
+  role      UserRole @default(FREELANCE)
+  isActive  Boolean  @default(true)
+  lastLogin DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  clients           Client[]
+  invoices          Invoice[]
+  quotes            Quote[]
+  projects          Project[]
+  prospects         Prospect[]
+  dashboardSettings DashboardSettings?
+  refreshTokens     RefreshToken[]
+  auditLogs         AuditLog[]
+  
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("refresh_tokens")
+}
+
+enum UserRole {
+  FREELANCE
+  ADMIN
+  AGENCY
+}
+
+// ============================================================================
+// GESTION CLIENTS
+// ============================================================================
+
+model Client {
+  id            String    @id @default(cuid())
+  name          String
+  email         String?
+  phone         String?
+  company       String?
+  siret         String?
+  tvaNumber     String?
+  address       String?
+  city          String?
+  zipCode       String?
+  country       String    @default("FR")
+  
+  // Métadonnées
+  notes         String?
+  tags          String[] // Tags personnalisables
+  paymentTerms  Int       @default(30) // Délai de paiement en jours
+  status        ClientStatus @default(ACTIVE)
+  
+  // Scoring automatique (pour CRM Phase 2)
+  score         Int       @default(0)
+  lastContact   DateTime?
+  
+  // Relations
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invoices      Invoice[]
+  quotes        Quote[]
+  projects      Project[]
+  interactions  ClientInteraction[]
+  
+  // Métadonnées système
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@map("clients")
+}
+
+model ClientInteraction {
+  id          String             @id @default(cuid())
+  type        InteractionType
+  subject     String
+  content     String
+  scheduledAt DateTime?
+  completedAt DateTime?
+  
+  // Relations
+  clientId    String
+  client      Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("client_interactions")
+}
+
+enum ClientStatus {
+  ACTIVE
+  INACTIVE
+  PROSPECT
+  ARCHIVED
+}
+
+enum InteractionType {
+  EMAIL
+  CALL
+  MEETING
+  NOTE
+  TASK
+}
+
+// ============================================================================
+// GESTION FACTURATION
+// ============================================================================
+
+model Invoice {
+  id              String        @id @default(cuid())
+  number          String        @unique // Numérotation automatique
+  
+  // Informations client
+  clientId        String
+  client          Client        @relation(fields: [clientId], references: [id])
+  
+  // Détails facture
+  issueDate       DateTime      @default(now())
+  dueDate         DateTime
+  paidAt          DateTime?
+  
+  // Montants
+  subtotal        Decimal       @db.Decimal(10,2)
+  vatRate         Decimal       @db.Decimal(5,2) @default(20.00) // TVA française
+  vatAmount       Decimal       @db.Decimal(10,2)
+  total           Decimal       @db.Decimal(10,2)
+  
+  // Statuts et métadonnées
+  status          InvoiceStatus @default(DRAFT)
+  currency        String        @default("EUR")
+  notes           String?
+  
+  // Fichiers
+  pdfPath         String?
+  
+  // Relations
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items           InvoiceItem[]
+  payments        Payment[]
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id          String  @id @default(cuid())
+  description String
+  quantity    Decimal @db.Decimal(10,2)
+  unitPrice   Decimal @db.Decimal(10,2)
+  total       Decimal @db.Decimal(10,2)
+  
+  invoiceId   String
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  
+  @@map("invoice_items")
+}
+
+model Quote {
+  id              String      @id @default(cuid())
+  number          String      @unique
+  
+  // Informations client
+  clientId        String
+  client          Client      @relation(fields: [clientId], references: [id])
+  
+  // Détails devis
+  issueDate       DateTime    @default(now())
+  validUntil      DateTime
+  acceptedAt      DateTime?
+  
+  // Montants
+  subtotal        Decimal     @db.Decimal(10,2)
+  vatRate         Decimal     @db.Decimal(5,2) @default(20.00)
+  vatAmount       Decimal     @db.Decimal(10,2)
+  total           Decimal     @db.Decimal(10,2)
+  
+  // Statuts
+  status          QuoteStatus @default(DRAFT)
+  currency        String      @default("EUR")
+  notes           String?
+  
+  // Fichiers
+  pdfPath         String?
+  
+  // Relations
+  userId          String
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items           QuoteItem[]
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@map("quotes")
+}
+
+model QuoteItem {
+  id          String  @id @default(cuid())
+  description String
+  quantity    Decimal @db.Decimal(10,2)
+  unitPrice   Decimal @db.Decimal(10,2)
+  total       Decimal @db.Decimal(10,2)
+  
+  quoteId     String
+  quote       Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  
+  @@map("quote_items")
+}
+
+model Payment {
+  id          String        @id @default(cuid())
+  amount      Decimal       @db.Decimal(10,2)
+  paidAt      DateTime      @default(now())
+  method      PaymentMethod @default(BANK_TRANSFER)
+  reference   String?
+  notes       String?
+  
+  invoiceId   String
+  invoice     Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime      @default(now())
+  
+  @@map("payments")
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
+  CHECK
+  CASH
+  CARD
+  PAYPAL
+  STRIPE
+  OTHER
+}
+
+// ============================================================================
+// GESTION PROJETS (Phase 2)
+// ============================================================================
+
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  description String?
+  
+  // Dates
+  startDate   DateTime      @default(now())
+  endDate     DateTime?
+  deadline    DateTime?
+  
+  // Budget et temps
+  budget      Decimal?      @db.Decimal(10,2)
+  hourlyRate  Decimal?      @db.Decimal(10,2)
+  
+  // Statut
+  status      ProjectStatus @default(ACTIVE)
+  
+  // Relations
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientId    String?
+  client      Client?       @relation(fields: [clientId], references: [id])
+  tasks       Task[]
+  timeEntries TimeEntry[]
+  
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  
+  @@map("projects")
+}
+
+model Task {
+  id          String     @id @default(cuid())
+  title       String
+  description String?
+  dueDate     DateTime?
+  completedAt DateTime?
+  priority    Priority   @default(MEDIUM)
+  
+  projectId   String
+  project     Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  timeEntries TimeEntry[]
+  
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  
+  @@map("tasks")
+}
+
+model TimeEntry {
+  id          String    @id @default(cuid())
+  description String?
+  startTime   DateTime
+  endTime     DateTime?
+  duration    Int       // En minutes
+  hourlyRate  Decimal?  @db.Decimal(10,2)
+  
+  projectId   String?
+  project     Project?  @relation(fields: [projectId], references: [id])
+  taskId      String?
+  task        Task?     @relation(fields: [taskId], references: [id])
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  @@map("time_entries")
+}
+
+enum ProjectStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  ON_HOLD
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+// ============================================================================
+// MODULE PROSPECTION (Phase 1)
+// ============================================================================
+
+model Prospect {
+  id            String         @id @default(cuid())
+  name          String
+  email         String?
+  phone         String?
+  company       String?
+  position      String?
+  source        String? // D'où vient le prospect
+  
+  // Statut et scoring
+  status        ProspectStatus @default(NEW)
+  score         Int            @default(0)
+  expectedValue Decimal?       @db.Decimal(10,2)
+  
+  // Suivi
+  lastContact   DateTime?
+  nextFollowUp  DateTime?
+  notes         String?
+  tags          String[]
+  
+  // Relations
+  userId        String
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  followUps     FollowUp[]
+  
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  
+  @@map("prospects")
+}
+
+model FollowUp {
+  id          String       @id @default(cuid())
+  type        FollowUpType
+  subject     String
+  content     String
+  scheduledAt DateTime
+  completedAt DateTime?
+  result      String?
+  
+  prospectId  String
+  prospect    Prospect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  
+  @@map("follow_ups")
+}
+
+enum ProspectStatus {
+  NEW
+  CONTACTED
+  INTERESTED
+  QUALIFIED
+  PROPOSAL_SENT
+  NEGOTIATION
+  CLOSED_WON
+  CLOSED_LOST
+}
+
+enum FollowUpType {
+  EMAIL
+  CALL
+  MEETING
+  SMS
+  LINKEDIN
+}
+
+// ============================================================================
+// DASHBOARD ET ANALYTICS (Phase 1)
+// ============================================================================
+
+model DashboardSettings {
+  id               String   @id @default(cuid())
+  
+  // Widgets activés
+  showCashFlow     Boolean  @default(true)
+  showRecentInvoices Boolean @default(true)
+  showProspects    Boolean  @default(true)
+  showOverdueInvoices Boolean @default(true)
+  showMonthlyRevenue Boolean @default(true)
+  
+  // Préférences d'affichage
+  currency         String   @default("EUR")
+  dateFormat       String   @default("DD/MM/YYYY")
+  
+  // Relations
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  
+  @@map("dashboard_settings")
+}
+
+// ============================================================================
+// AUDIT ET SÉCURITÉ
+// ============================================================================
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String   // "CREATE_INVOICE", "DELETE_CLIENT", etc.
+  resource    String   // "Invoice", "Client", etc.
+  resourceId  String   // ID de la ressource concernée
+  oldValues   Json?
+  newValues   Json?
+  ipAddress   String?
+  userAgent   String?
+  
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime @default(now())
+  
+  @@map("audit_logs")
+}

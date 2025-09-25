@@ -1,0 +1,33 @@
+{
+  "name": "freelance-os",
+  "version": "1.0.0",
+  "description": "Outil open-source moderne de gestion complète pour freelances et petites entreprises",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"pnpm dev:backend\" \"pnpm dev:frontend\"",
+    "dev:backend": "pnpm --filter backend dev",
+    "dev:frontend": "pnpm --filter frontend dev",
+    "build": "pnpm build:backend && pnpm build:frontend",
+    "build:backend": "pnpm --filter backend build",
+    "build:frontend": "pnpm --filter frontend build",
+    "test": "pnpm test:backend && pnpm test:frontend",
+    "test:backend": "pnpm --filter backend test",
+    "test:frontend": "pnpm --filter frontend test",
+    "lint": "pnpm lint:backend && pnpm lint:frontend",
+    "lint:backend": "pnpm --filter backend lint",
+    "lint:frontend": "pnpm --filter frontend lint",
+    "docker:dev": "docker-compose up -d",
+    "docker:prod": "docker-compose -f docker-compose.prod.yml up -d",
+    "docker:down": "docker-compose down -v"
+  },
+  "keywords": ["freelance", "invoicing", "crm", "project-management", "time-tracking"],
+  "author": "FreelanceOS Team",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "workspaces": [
+    "backend",
+    "frontend"
+  ]
+}

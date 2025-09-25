@@ -1,0 +1,20 @@
+# Dockerfile pour le développement - Frontend React/Vite
+FROM node:20-alpine
+
+# Installation de pnpm
+RUN corepack enable pnpm
+
+WORKDIR /app
+
+# Copie du package.json et installation
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+# Copie du code source
+COPY . .
+
+# Exposition du port Vite
+EXPOSE 5173
+
+# Commande de démarrage avec hot-reload
+CMD ["pnpm", "dev", "--host", "0.0.0.0"]

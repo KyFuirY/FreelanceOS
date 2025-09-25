@@ -1,0 +1,37 @@
+# Dockerfile pour le développement - Backend Node.js/Fastify
+FROM node:20-alpine
+
+# Installation de pnpm
+RUN corepack enable pnpm
+
+WORKDIR /app
+
+# Installation des dépendances globales nécessaires
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    freetype-dev \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
+
+# Variables d'environnement pour Puppeteer
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
+# Copie du package.json et installation
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+# Copie du code source
+COPY . .
+
+# Génération du client Prisma
+RUN pnpm db:generate
+
+# Exposition du port
+EXPOSE 3000
+
+# Commande de démarrage avec hot-reload
+CMD ["pnpm", "dev"]
