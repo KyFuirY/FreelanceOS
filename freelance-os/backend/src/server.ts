@@ -22,7 +22,7 @@ import prospectRoutes from '@/routes/prospects'
 
 async function buildServer() {
   const fastify = Fastify({
-    logger: false, // Nous utilisons Winston
+    logger: false, // Nous utilisons Winston pour les logs
     trustProxy: true
   })
 
@@ -80,12 +80,24 @@ async function buildServer() {
   }
 
   // Enregistrement des routes API
-  await fastify.register(healthRoutes)
+  logger.info('🔧 Enregistrement des routes...')
+  await fastify.register(healthRoutes, { prefix: '/api' })
+  logger.info('✅ Routes health enregistrées')
+  
   await fastify.register(authRoutes, { prefix: '/api/v1/auth' })
+  logger.info('✅ Routes auth enregistrées')
+  
   await fastify.register(clientRoutes, { prefix: '/api/v1/clients' })
+  logger.info('✅ Routes clients enregistrées')
+  
   await fastify.register(invoiceRoutes, { prefix: '/api/v1/invoices' })
+  logger.info('✅ Routes invoices enregistrées')
+  
   await fastify.register(dashboardRoutes, { prefix: '/api/v1/dashboard' })
+  logger.info('✅ Routes dashboard enregistrées')
+  
   await fastify.register(prospectRoutes, { prefix: '/api/v1/prospects' })
+  logger.info('✅ Routes prospects enregistrées')
 
   // Gestion des erreurs globales
   fastify.setErrorHandler((error, request, reply) => {
@@ -128,7 +140,12 @@ async function buildServer() {
 
 async function startServer() {
   try {
+    logger.info('🚀 Démarrage du serveur FreelanceOS...')
+    
     const fastify = await buildServer()
+    fastifyInstance = fastify // Stocker la référence pour l'arrêt propre
+    
+    logger.info('🔧 Tentative de démarrage sur le port ' + config.PORT)
     
     await fastify.listen({
       port: config.PORT,
@@ -140,25 +157,58 @@ async function startServer() {
       logger.info(`📚 Documentation API: http://localhost:${config.PORT}/docs`)
     }
     
+    // Keepalive pour empêcher l'arrêt automatique
+    const keepAlive = setInterval(() => {
+      logger.debug('⚡ Serveur actif')
+    }, 30000) // Log toutes les 30 secondes
+    
+    // Nettoyer l'interval lors de l'arrêt
+    process.on('SIGTERM', () => clearInterval(keepAlive))
+    process.on('SIGINT', () => clearInterval(keepAlive))
+    
   } catch (error) {
-    logger.error('Erreur de démarrage du serveur', error)
+    logger.error('❌ Erreur de démarrage du serveur', error)
     process.exit(1)
   }
 }
 
 // Gestion propre de l'arrêt
-process.on('SIGTERM', async () => {
-  logger.info('Arrêt du serveur...')
-  await prisma.$disconnect()
-  await redis.disconnect()
-  process.exit(0)
-})
+let isShuttingDown = false
+let fastifyInstance: any = null
 
-process.on('SIGINT', async () => {
-  logger.info('Arrêt du serveur...')
-  await prisma.$disconnect()
-  await redis.disconnect()
-  process.exit(0)
+const gracefulShutdown = async (signal: string) => {
+  if (isShuttingDown) return
+  isShuttingDown = true
+  
+  logger.info(`🔄 Signal ${signal} reçu - Arrêt propre du serveur...`)
+  
+  try {
+    // Fermer le serveur Fastify
+    if (fastifyInstance) {
+      await fastifyInstance.close()
+    }
+    
+    // Fermer les connexions aux bases de données
+    await prisma.$disconnect()
+    await redis.disconnect()
+    
+    logger.info('✅ Arrêt propre terminé')
+    process.exit(0)
+  } catch (error) {
+    logger.error('❌ Erreur lors de l\'arrêt propre', error)
+    process.exit(1)
+  }
+}
+
+// Écouter uniquement les signaux intentionnels
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
+process.on('SIGINT', () => gracefulShutdown('SIGINT'))
+
+// Log des arrêts de processus
+process.on('exit', (code) => {
+  if (!isShuttingDown) {
+    logger.warn(`🛑 Processus arrêté de manière inattendue avec le code ${code}`)
+  }
 })
 
 if (require.main === module) {

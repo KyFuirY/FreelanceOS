@@ -55,7 +55,8 @@ prisma.$connect()
   })
   .catch((error) => {
     logger.error('❌ Erreur de connexion à la base de données', error)
-    process.exit(1)
+    // Ne pas arrêter le processus, laisser Fastify gérer l'erreur
+    throw error
   })
 
 export { prisma }

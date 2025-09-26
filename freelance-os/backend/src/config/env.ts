@@ -48,7 +48,7 @@ const env = envSchema.safeParse(process.env)
 if (!env.success) {
   console.error('❌ Variables d\'environnement invalides:')
   console.error(env.error.format())
-  process.exit(1)
+  throw new Error('Variables d\'environnement invalides')
 }
 
 export const config = env.data
@@ -68,6 +68,6 @@ if (config.NODE_ENV === 'production') {
   
   if (missing.length > 0) {
     console.error(`❌ Variables d'environnement manquantes pour la production: ${missing.join(', ')}`)
-    process.exit(1)
+    throw new Error('Variables d\'environnement manquantes pour la production')
   }
 }

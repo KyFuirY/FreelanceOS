@@ -43,6 +43,10 @@ Thumbs.db
 coverage/
 *.lcov
 
+# PM2 logs et process
+backend/logs/
+.pm2/
+
 # Docker
 .docker/
 
