@@ -5,7 +5,7 @@ import jwt from '@fastify/jwt'
 
 import { config } from '@/config/env'
 import healthRoutes from '@/routes/health'
-import authRoutes from '@/routes/auth'
+import authRoutes from '@/routes/auth.secure'
 
 export function buildApp(): FastifyInstance {
   const app = Fastify({

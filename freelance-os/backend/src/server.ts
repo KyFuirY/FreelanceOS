@@ -11,11 +11,17 @@ import { config } from '@/config/env'
 import { logger } from '@/utils/logger'
 import { prisma } from '@/utils/database'
 import { redis } from '@/utils/redis'
+import { XSS_SECURITY_HEADERS } from '@/utils/xss-protection'
+import { pathTraversalValidationHook } from '@/utils/path-traversal-protection'
+import { SECURE_CORS_CONFIG, corsSecurityMiddleware, CORS_SECURITY_HEADERS } from '@/utils/cors-security'
+import { GLOBAL_RATE_LIMIT_CONFIG, advancedRateLimitMiddleware } from '@/utils/advanced-rate-limit'
+import { SECURE_JWT_CONFIG, credentialsManager, ENV_SECURITY_CHECKS } from '@/utils/credentials-security'
+import { secureErrorHandler, setupGlobalErrorHandlers, ERROR_SECURITY_HEADERS } from '@/utils/secure-error-handler'
 
 // Routes imports
-import healthRoutes from '@/routes/health'
-import authRoutes from '@/routes/auth'
-import clientRoutes from '@/routes/clients'
+import healthRoutes from '@/routes/health.routes'
+import authRoutes from '@/routes/auth.secure'
+import { clientRoutes } from '@/routes/clients.routes'
 import invoiceRoutes from '@/routes/invoices'
 import dashboardRoutes from '@/routes/dashboard'
 import prospectRoutes from '@/routes/prospects'
@@ -28,27 +34,32 @@ async function buildServer() {
 
   // Enregistrement des plugins de sécurité
   await fastify.register(helmet, {
-    contentSecurityPolicy: false
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        fontSrc: ["'self'"],
+        connectSrc: ["'self'"],
+        frameAncestors: ["'none'"],
+        baseUri: ["'self'"]
+      }
+    },
+    crossOriginEmbedderPolicy: false
   })
 
-  await fastify.register(cors, {
-    origin: config.NODE_ENV === 'production' ? config.FRONTEND_URL : true,
-    credentials: true
-  })
+  await fastify.register(cors, SECURE_CORS_CONFIG)
 
-  await fastify.register(rateLimit, {
-    max: config.NODE_ENV === 'production' ? 100 : 1000,
-    timeWindow: '1 minute',
-    redis: redis
-  })
+  await fastify.register(rateLimit, GLOBAL_RATE_LIMIT_CONFIG)
 
-  // JWT Plugin
+  // JWT Plugin avec configuration sécurisée
   await fastify.register(jwt, {
-    secret: config.JWT_SECRET
+    secret: SECURE_JWT_CONFIG.secret()
   })
 
-  // Documentation Swagger (développement uniquement)
-  if (config.NODE_ENV === 'development') {
+  // Documentation Swagger (développement uniquement avec protection supplémentaire)
+  if (config.NODE_ENV === 'development' && process.env.ENABLE_SWAGGER === 'true') {
     await fastify.register(swagger, {
       swagger: {
         info: {
@@ -60,6 +71,14 @@ async function buildServer() {
         schemes: ['http'],
         consumes: ['application/json'],
         produces: ['application/json'],
+        securityDefinitions: {
+          bearerAuth: {
+            type: 'apiKey',
+            name: 'Authorization',
+            in: 'header',
+            description: 'Bearer token pour authentification'
+          }
+        },
         tags: [
           { name: 'auth', description: 'Authentification' },
           { name: 'clients', description: 'Gestion clients' },
@@ -73,11 +92,53 @@ async function buildServer() {
     await fastify.register(swaggerUi, {
       routePrefix: '/docs',
       uiConfig: {
-        docExpansion: 'full',
-        deepLinking: false
+        docExpansion: 'none', // Sécurisé: pas d'expansion automatique
+        deepLinking: false,
+        displayRequestDuration: false,
+        filter: true
+      },
+      staticCSP: true,
+      transformStaticCSP: (header) => header,
+      uiHooks: {
+        onRequest: async (request, reply) => {
+          // Protection par IP whitelist en développement
+          const allowedIPs = ['127.0.0.1', '::1', 'localhost']
+          const clientIP = request.ip
+          
+          if (!allowedIPs.some(ip => clientIP.includes(ip))) {
+            return reply.code(403).send({ error: 'Accès refusé' })
+          }
+        }
       }
     })
   }
+
+  // Hook global pour ajouter les en-têtes de sécurité
+  fastify.addHook('onSend', async (request, reply) => {
+    // Ajouter les en-têtes de sécurité XSS
+    Object.entries(XSS_SECURITY_HEADERS).forEach(([header, value]) => {
+      reply.header(header, value)
+    })
+    
+    // Ajouter les en-têtes de sécurité CORS
+    Object.entries(CORS_SECURITY_HEADERS).forEach(([header, value]) => {
+      reply.header(header, value)
+    })
+    
+    // Ajouter les en-têtes de sécurité pour les erreurs
+    Object.entries(ERROR_SECURITY_HEADERS).forEach(([header, value]) => {
+      reply.header(header, value)
+    })
+  })
+
+  // Hook global pour protection Path Traversal
+  fastify.addHook('preHandler', pathTraversalValidationHook())
+
+  // Hook global pour sécurité CORS avancée
+  fastify.addHook('preHandler', corsSecurityMiddleware())
+
+  // Hook global pour rate limiting avancé
+  fastify.addHook('preHandler', advancedRateLimitMiddleware())
 
   // Enregistrement des routes API
   logger.info('🔧 Enregistrement des routes...')
@@ -99,39 +160,17 @@ async function buildServer() {
   await fastify.register(prospectRoutes, { prefix: '/api/v1/prospects' })
   logger.info('✅ Routes prospects enregistrées')
 
-  // Gestion des erreurs globales
-  fastify.setErrorHandler((error, request, reply) => {
-    logger.error('Erreur serveur', {
-      error: error.message,
-      stack: error.stack,
-      url: request.url,
-      method: request.method,
-      ip: request.ip
-    })
+  // Gestionnaire d'erreurs sécurisé
+  fastify.setErrorHandler(secureErrorHandler)
 
-    if (error.validation) {
-      return reply.status(400).send({
-        error: 'Données invalides',
-        details: error.validation
-      })
-    }
-
-    if (error.statusCode) {
-      return reply.status(error.statusCode).send({
-        error: error.message
-      })
-    }
-
-    return reply.status(500).send({
-      error: 'Erreur interne du serveur'
-    })
-  })
-
-  // Handler 404
+  // Handler 404 sécurisé
   fastify.setNotFoundHandler((request, reply) => {
     reply.status(404).send({
-      error: 'Route non trouvée',
-      path: request.url
+      error: {
+        type: 'RESOURCE_NOT_FOUND',
+        message: 'Ressource introuvable',
+        timestamp: new Date().toISOString()
+      }
     })
   })
 
@@ -140,6 +179,9 @@ async function buildServer() {
 
 async function startServer() {
   try {
+    // Configuration des gestionnaires d'erreurs globaux
+    setupGlobalErrorHandlers()
+    
     logger.info('🚀 Démarrage du serveur FreelanceOS...')
     
     const fastify = await buildServer()

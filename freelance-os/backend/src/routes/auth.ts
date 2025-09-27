@@ -3,19 +3,27 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { z } from 'zod'
 import { AuthService } from '@/services/auth.service'
 import { authMiddleware, type AuthenticatedUser } from '@/middleware/auth.middleware'
+import { secureLogger, logSecurityEvent } from '@/utils/secure-logger'
 import { logger } from '@/utils/logger'
+import { 
+  secureNameSchema, 
+  secureEmailSchema, 
+  securePasswordSchema, 
+  validatePayloadSize,
+  sanitizeInput
+} from '@/utils/security-validation'
 
-// Schémas de validation Zod
+// Schémas de validation Zod sécurisés
 const registerSchema = z.object({
-  email: z.string().email('Email invalide'),
-  password: z.string().min(8, 'Le mot de passe doit contenir au moins 8 caractères'),
-  firstName: z.string().min(2, 'Le prénom doit contenir au moins 2 caractères'),
-  lastName: z.string().min(2, 'Le nom doit contenir au moins 2 caractères')
+  email: secureEmailSchema,
+  password: securePasswordSchema,
+  firstName: secureNameSchema,
+  lastName: secureNameSchema
 })
 
 const loginSchema = z.object({
-  email: z.string().email('Email invalide'),
-  password: z.string().min(1, 'Mot de passe requis')
+  email: secureEmailSchema,
+  password: z.string().min(1, 'Mot de passe requis').max(128, 'Mot de passe trop long')
 })
 
 const refreshTokenSchema = z.object({
@@ -32,18 +40,37 @@ const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // POST /auth/register - Inscription
   fastify.post('/register', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
+      // Validation taille payload (anti-DoS)
+      if (!validatePayloadSize(request.body, 5)) {
+        logSecurityEvent('SUSPICIOUS_ACTIVITY', {
+          reason: 'Payload trop volumineux',
+          ip: request.ip,
+          endpoint: request.url,
+          severity: 'HIGH'
+        })
+        return reply.code(413).send({ error: 'Payload trop volumineux' })
+      }
+
       const validatedData = registerSchema.parse(request.body)
       
+      // Nettoyage des inputs
+      const cleanData = {
+        email: sanitizeInput(validatedData.email),
+        password: validatedData.password, // Pas de sanitize sur le password
+        firstName: sanitizeInput(validatedData.firstName),
+        lastName: sanitizeInput(validatedData.lastName)
+      }
+      
       const result = await AuthService.register(
-        validatedData.email,
-        validatedData.password,
-        validatedData.firstName,
-        validatedData.lastName
+        cleanData.email,
+        cleanData.password,
+        cleanData.firstName,
+        cleanData.lastName
       )
 
-      logger.info('Inscription réussie', { 
-        userId: result.user.id,
-        email: result.user.email 
+      secureLogger.info('Inscription réussie', { 
+        userId: result.user.id
+        // Email supprimé pour sécurité
       })
 
       return reply.code(201).send({

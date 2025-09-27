@@ -3,7 +3,7 @@ import * as jwt from 'jsonwebtoken'
 import { config } from '@/config/env'
 import { prisma } from '@/utils/database'
 import { redis } from '@/utils/redis'
-import { logger } from '@/utils/logger'
+import { secureLogger, logSecurityEvent } from '@/utils/secure-logger'
 import type { User } from '@prisma/client'
 
 // Types pour l'authentification
@@ -61,9 +61,9 @@ export class AuthService {
     // Calculer l'expiration en secondes
     const expiresIn = 15 * 60 // 15 minutes
 
-    logger.info('Tokens générés avec succès', { 
-      userId: user.id, 
-      email: user.email 
+    secureLogger.info('Tokens générés avec succès', { 
+      userId: user.id
+      // Email retiré des logs pour sécurité
     })
 
     return {
@@ -79,7 +79,10 @@ export class AuthService {
       const decoded = jwt.verify(token, config.JWT_SECRET) as JWTPayload
       return decoded
     } catch (error) {
-      logger.warn('Token d\'accès invalide', { error: (error as Error).message })
+      logSecurityEvent('ACCESS_DENIED', {
+        reason: 'Invalid access token',
+        severity: 'MEDIUM'
+      })
       throw new Error('Token d\'accès invalide')
     }
   }
@@ -111,8 +114,9 @@ export class AuthService {
       // Générer de nouveaux tokens
       return this.generateTokens(user)
     } catch (error) {
-      logger.warn('Erreur lors du rafraîchissement du token', { 
-        error: (error as Error).message 
+      logSecurityEvent('ACCESS_DENIED', {
+        reason: 'Invalid refresh token',
+        severity: 'HIGH'
       })
       throw new Error('Refresh token invalide')
     }
@@ -121,7 +125,7 @@ export class AuthService {
   // Déconnexion (blacklist du refresh token)
   static async logout(userId: string): Promise<void> {
     await redis.del(`refresh_token:${userId}`)
-    logger.info('Utilisateur déconnecté', { userId })
+    secureLogger.info('Utilisateur déconnecté', { userId })
   }
 
   // Inscription d'un nouvel utilisateur
@@ -151,9 +155,9 @@ export class AuthService {
         }
       })
 
-      logger.info('Nouvel utilisateur créé', { 
-        userId: user.id, 
-        email: user.email 
+      logSecurityEvent('LOGIN_SUCCESS', {
+        userId: user.id,
+        severity: 'LOW'
       })
 
       // Générer les tokens
@@ -170,9 +174,9 @@ export class AuthService {
         tokens
       }
     } catch (error) {
-      logger.error('Erreur lors de l\'inscription', { 
-        error: (error as Error).message,
-        email 
+      secureLogger.error('Erreur lors de l\'inscription', { 
+        error: (error as Error).message
+        // Email retiré pour sécurité
       })
       throw error
     }
@@ -202,9 +206,9 @@ export class AuthService {
         data: { lastLogin: new Date() }
       })
 
-      logger.info('Connexion réussie', { 
-        userId: user.id, 
-        email: user.email 
+      logSecurityEvent('LOGIN_SUCCESS', {
+        userId: user.id,
+        severity: 'LOW'
       })
 
       // Générer les tokens
@@ -221,9 +225,9 @@ export class AuthService {
         tokens
       }
     } catch (error) {
-      logger.error('Erreur lors de la connexion', { 
-        error: (error as Error).message,
-        email 
+      logSecurityEvent('LOGIN_FAILED', {
+        reason: (error as Error).message,
+        severity: 'MEDIUM'
       })
       throw error
     }
